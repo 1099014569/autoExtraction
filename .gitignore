@@ -1,0 +1,47 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== npm 缓存 =====
+.npm-cache/
+.npm-cache-build/
+.npm-cache-run/
+.npm-cache-run-admin/
+
+# ===== 构建产物 =====
+dist/
+build/
+coverage/
+
+# ===== 环境变量 =====
+.env
+.env.local
+.env.*.local
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== 运行时数据 =====
+storage/
+apps/api/storage/
+apps/api/data/
+
+# ===== Vite =====
+apps/web/.vite/
+
+# ===== Tauri / Rust =====
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/target-codex/
+apps/desktop/src-tauri/gen/
+
+# win-api 运行时资源（含 node.exe 大型二进制，需本地生成）
+apps/desktop/src-tauri/resources/win-api/*
+!apps/desktop/src-tauri/resources/win-api/.keep
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 工具 =====
+.ace-tool/

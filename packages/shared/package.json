@@ -1,0 +1,15 @@
+{
+  "name": "@autoextraction/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "echo \"shared package has no runtime tests\""
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@autoextraction/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n api,web,tauri \"npm --prefix ../.. run dev --workspace=@autoextraction/api\" \"npm --prefix ../.. run dev --workspace=@autoextraction/web\" \"tauri dev\"",
+    "build": "npm --prefix ../.. run build --workspace=@autoextraction/api && npm --prefix ../.. run build --workspace=@autoextraction/web && tauri build",
+    "test": "node tests/prepare-win-bundle.test.mjs",
+    "prepare:win": "node scripts/prepare-win-bundle.mjs",
+    "build:win": "npm run prepare:win && tauri build --bundles nsis"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "@tauri-apps/cli": "^2.6.2"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "@autoextraction/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@autoextraction/shared": "0.1.0",
+    "@mozilla/readability": "^0.6.0",
+    "cors": "^2.8.5",
+    "docx": "^9.5.1",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "jsdom": "^26.1.0",
+    "nanoid": "^5.1.5",
+    "openai": "^4.103.0",
+    "playwright": "^1.52.0",
+    "pptxgenjs": "^4.0.1",
+    "robots-parser": "^3.0.1",
+    "sanitize-filename": "^1.6.3",
+    "turndown": "^7.2.0",
+    "zod": "^3.25.17"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.1",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^24.6.0",
+    "@types/supertest": "^6.0.3",
+    "@types/turndown": "^5.0.5",
+    "supertest": "^7.1.1",
+    "tsx": "^4.19.4",
+    "vitest": "^3.1.3"
+  }
+}

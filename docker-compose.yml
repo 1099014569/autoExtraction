@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: autoextraction-api
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - HOST=0.0.0.0
+      - STORAGE_DIR=/app/storage
+      - DATABASE_PATH=/app/storage/autoextraction.db
+    volumes:
+      - autoextraction_storage:/app/storage
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: autoextraction-web
+    depends_on:
+      - api
+    ports:
+      - "5173:4173"
+    environment:
+      - VITE_API_BASE=http://localhost:8787
+
+volumes:
+  autoextraction_storage:

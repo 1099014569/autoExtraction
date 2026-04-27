@@ -1,0 +1,30 @@
+{
+  "name": "auto-extraction",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AutoExtraction V1 monorepo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "package:desktop": "npm run build -w apps/api && npm run build -w apps/web && npm run build -w apps/desktop",
+    "package:desktop:win": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web && npm run build:win -w apps/desktop",
+    "docker:up": "docker compose up --build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=10.0.0"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1"
+  }
+}

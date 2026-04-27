@@ -39,19 +39,31 @@ npm run docker:up
 
 ```bash
 npm run dev -w apps/desktop
-npm run build -w apps/desktop
 ```
 
-### Windows 安装包
+### 本地打包
+
+桌面程序使用 Tauri 2.x 打包。release 包会携带本机 Node 运行时、API 构建产物、API 运行时依赖和 Playwright Chromium 缓存，启动桌面程序后会自动拉起本地 API。
 
 ```bash
-npm run package:desktop:win
+npx playwright install chromium
 ```
 
-该命令会生成自包含的 Windows NSIS 安装包，桌面程序启动后会自动拉起本地 API。产物路径：
+| 平台 | 执行系统 | 命令 | 产物 |
+|------|----------|------|------|
+| Windows | Windows | `npm run package:desktop:win` | `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe` |
+| Linux | Linux | `npm run package:desktop:linux` | `apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage`、`apps/desktop/src-tauri/target/release/bundle/deb/*.deb` |
+| macOS | macOS | `npm run package:desktop:mac` | `apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg`、`apps/desktop/src-tauri/target/release/bundle/macos/*.app` |
+
+> 平台包需要在对应系统上执行。准备脚本会复制当前系统的 `node` 可执行文件和当前系统的 Playwright 浏览器缓存，因此不建议跨系统交叉打包。
+
+### 发布流水线
+
+GitHub Actions 配置位于 `.github/workflows/release.yml`。推送符合 `v*.*.*` 的 tag 时会触发发布流水线：
 
 ```bash
-apps/desktop/src-tauri/target/release/bundle/nsis/AutoExtraction_0.1.0_x64-setup.exe
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-> 打包依赖本机 Node 运行时和 Playwright Chromium 缓存；如果缺少浏览器缓存，先执行 `npx playwright install chromium`。
+流水线会分别在 `windows-latest`、`ubuntu-22.04`、`macos-latest` 上执行对应平台打包命令，上传构建产物，并在全部平台构建完成后创建 GitHub Release。

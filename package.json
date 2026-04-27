@@ -14,6 +14,8 @@
     "lint": "npm run lint --workspaces --if-present",
     "package:desktop": "npm run build -w apps/api && npm run build -w apps/web && npm run build -w apps/desktop",
     "package:desktop:win": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web && npm run build:win -w apps/desktop",
+    "package:desktop:linux": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web && npm run build:linux -w apps/desktop",
+    "package:desktop:mac": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web && npm run build:mac -w apps/desktop",
     "docker:up": "docker compose up --build"
   },
   "devDependencies": {

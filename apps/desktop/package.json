@@ -8,7 +8,11 @@
     "build": "npm --prefix ../.. run build --workspace=@autoextraction/api && npm --prefix ../.. run build --workspace=@autoextraction/web && tauri build",
     "test": "node tests/prepare-win-bundle.test.mjs",
     "prepare:win": "node scripts/prepare-win-bundle.mjs",
-    "build:win": "npm run prepare:win && tauri build --bundles nsis"
+    "prepare:linux": "node scripts/prepare-linux-bundle.mjs",
+    "prepare:mac": "node scripts/prepare-mac-bundle.mjs",
+    "build:win": "npm run prepare:win && tauri build --config src-tauri/conf/windows.json",
+    "build:linux": "npm run prepare:linux && tauri build --config src-tauri/conf/linux.json",
+    "build:mac": "npm run prepare:mac && tauri build --config src-tauri/conf/macos.json"
   },
   "devDependencies": {
     "concurrently": "^9.2.0",

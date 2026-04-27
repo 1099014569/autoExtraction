@@ -37,6 +37,10 @@ apps/desktop/src-tauri/gen/
 # win-api 运行时资源（含 node.exe 大型二进制，需本地生成）
 apps/desktop/src-tauri/resources/win-api/*
 !apps/desktop/src-tauri/resources/win-api/.keep
+apps/desktop/src-tauri/resources/linux-api/*
+!apps/desktop/src-tauri/resources/linux-api/.keep
+apps/desktop/src-tauri/resources/mac-api/*
+!apps/desktop/src-tauri/resources/mac-api/.keep
 
 # ===== 操作系统 =====
 .DS_Store
@@ -45,3 +49,4 @@ desktop.ini
 
 # ===== 工具 =====
 .ace-tool/
+CLAUDE.md

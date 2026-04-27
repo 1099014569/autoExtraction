@@ -6,19 +6,16 @@ import {
   readFile,
   readdir,
   rm,
-  stat,
   writeFile
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { homedir } from "node:os";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
 const repoRoot = resolve(desktopDir, "../..");
-const defaultOutputDir = join(desktopDir, "src-tauri", "resources", "win-api");
-const execFileAsync = promisify(execFile);
+const defaultOutputDir = join(desktopDir, "src-tauri", "resources", "mac-api");
 
 const pathExists = async (path) => {
   try {
@@ -30,62 +27,6 @@ const pathExists = async (path) => {
 };
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
-
-const normalizeForProcessMatch = (value) =>
-  value.replaceAll("\\", "/").replaceAll("//?/", "").toLowerCase();
-
-export const isPackagedApiProcessCommandLine = (commandLine, rootDir = repoRoot) => {
-  if (!commandLine) {
-    return false;
-  }
-
-  const normalizedCommand = normalizeForProcessMatch(commandLine);
-  const normalizedRoot = normalizeForProcessMatch(resolve(rootDir));
-
-  return (
-    normalizedCommand.includes(normalizedRoot) &&
-    normalizedCommand.includes("/resources/win-api/") &&
-    normalizedCommand.includes("/api/dist/index.js")
-  );
-};
-
-const parsePowerShellJson = (value) => {
-  if (!value.trim()) {
-    return [];
-  }
-  const parsed = JSON.parse(value);
-  return Array.isArray(parsed) ? parsed : [parsed];
-};
-
-const stopRunningPackagedApiProcesses = async (rootDir) => {
-  const query = [
-    "Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\"",
-    "Select-Object ProcessId,CommandLine",
-    "ConvertTo-Json -Compress"
-  ].join(" | ");
-
-  const { stdout } = await execFileAsync("powershell.exe", [
-    "-NoProfile",
-    "-Command",
-    query
-  ]);
-  const processes = parsePowerShellJson(stdout);
-  const staleProcessIds = processes
-    .filter((item) => isPackagedApiProcessCommandLine(item.CommandLine ?? "", rootDir))
-    .map((item) => Number(item.ProcessId))
-    .filter(Number.isInteger);
-
-  if (staleProcessIds.length === 0) {
-    return;
-  }
-
-  await execFileAsync("powershell.exe", [
-    "-NoProfile",
-    "-Command",
-    `Stop-Process -Id ${staleProcessIds.join(",")} -Force`
-  ]);
-  console.log(`[desktop] 已结束旧的打包 API 进程：${staleProcessIds.join(", ")}`);
-};
 
 const packageDir = (nodeModulesDir, packageName) =>
   packageName.startsWith("@")
@@ -181,43 +122,24 @@ const resolvePlaywrightBrowsersPath = () => {
   if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
     return resolve(process.env.PLAYWRIGHT_BROWSERS_PATH);
   }
-  if (!process.env.LOCALAPPDATA) {
-    return "";
-  }
-  return join(process.env.LOCALAPPDATA, "ms-playwright");
+  // macOS 默认 Playwright 缓存路径
+  return join(homedir(), "Library", "Caches", "ms-playwright");
 };
 
 const copyNodeRuntime = async (outputDir) => {
   const nodeTargetDir = join(outputDir, "node");
-  const destPath = join(nodeTargetDir, "node.exe");
-
-  // 若目标 node.exe 已存在且与当前运行文件大小相同，则跳过拷贝。
-  // 避免 Windows Defender 对新写入的可执行文件加文件锁，导致 tauri-build 读取失败（os error 32）。
-  if (await pathExists(destPath)) {
-    const [srcStat, destStat] = await Promise.all([stat(process.execPath), stat(destPath)]);
-    if (srcStat.size === destStat.size) {
-      return;
-    }
-  }
-
   await mkdir(nodeTargetDir, { recursive: true });
-  await cp(process.execPath, destPath);
+  // macOS 不使用 .exe 后缀
+  await cp(process.execPath, join(nodeTargetDir, "node"));
 };
 
-export const createDesktopResourceManifest = async (rootDir = repoRoot) => {
-  const resolvedRoot = rootDir instanceof URL ? fileURLToPath(rootDir) : rootDir;
-  return readJson(join(resolvedRoot, "apps", "desktop", "src-tauri", "tauri.conf.json"));
-};
-
-export const prepareWinBundle = async ({
+export const prepareMacBundle = async ({
   rootDir = repoRoot,
   outputDir = defaultOutputDir
 } = {}) => {
-  if (process.platform !== "win32") {
-    throw new Error("Windows 桌面包资源只能在 Windows 环境准备");
+  if (process.platform !== "darwin") {
+    throw new Error("macOS 桌面包资源只能在 macOS 环境准备");
   }
-
-  await stopRunningPackagedApiProcesses(rootDir);
 
   const apiDistDir = join(rootDir, "apps", "api", "dist");
   if (!(await pathExists(join(apiDistDir, "index.js")))) {
@@ -226,7 +148,9 @@ export const prepareWinBundle = async ({
 
   const playwrightBrowsersPath = resolvePlaywrightBrowsersPath();
   if (!playwrightBrowsersPath || !(await pathExists(playwrightBrowsersPath))) {
-    throw new Error("缺少 Playwright 浏览器缓存，请先执行 npx playwright install chromium");
+    throw new Error(
+      `缺少 Playwright 浏览器缓存（${playwrightBrowsersPath}），请先执行 npx playwright install chromium`
+    );
   }
 
   const nodeModulesDir = join(rootDir, "node_modules");
@@ -237,13 +161,7 @@ export const prepareWinBundle = async ({
     workspacePackageNames
   });
 
-  // 选择性清理：删除会变化的子目录，保留 node/ 以免 Windows Defender 重新扫描 node.exe
-  for (const subdir of ["api", "node_modules", "ms-playwright"]) {
-    await rm(join(outputDir, subdir), { recursive: true, force: true });
-  }
-  for (const file of ["manifest.json", ".keep"]) {
-    await rm(join(outputDir, file), { force: true });
-  }
+  await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
 
   await copyNodeRuntime(outputDir);
@@ -263,6 +181,7 @@ export const prepareWinBundle = async ({
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
+        platform: "macos",
         nodeVersion: process.version,
         runtimePackages: [...runtimePackages].sort()
       },
@@ -272,12 +191,12 @@ export const prepareWinBundle = async ({
   );
   await writeFile(join(outputDir, ".keep"), "");
 
-  console.log(`[desktop] Windows API 运行资源已准备：${outputDir}`);
+  console.log(`[desktop] macOS API 运行资源已准备：${outputDir}`);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  prepareWinBundle().catch((error) => {
-    console.error(`[desktop] Windows API 运行资源准备失败：${error.message}`);
+  prepareMacBundle().catch((error) => {
+    console.error(`[desktop] macOS API 运行资源准备失败：${error.message}`);
     process.exitCode = 1;
   });
 }

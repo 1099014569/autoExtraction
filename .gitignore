@@ -11,6 +11,17 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
+
+# Web 前端源码目录只保留 TS/TSX，避免提交 tsc 误输出的 JS 产物
+apps/web/src/*.js
+apps/web/src/**/*.js
+apps/web/src/*.jsx
+apps/web/src/**/*.jsx
+apps/web/src/*.js.map
+apps/web/src/**/*.js.map
+apps/web/src/*.jsx.map
+apps/web/src/**/*.jsx.map
 
 # ===== 环境变量 =====
 .env

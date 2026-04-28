@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
-  ExtractBatchItem,
-  ExtractBatchResponse,
+  ExportBatchResponse,
   ExportFormat,
   ExportResponse,
+  ExtractBatchItem,
+  ExtractBatchResponse,
   Job,
   ProviderConfig,
+  RewriteBatchResponse,
   RewriteLocalState,
   RewriteMode,
   RewriteResponse
@@ -36,24 +38,30 @@ const parseUrlsFromInput = (value: string): string[] =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const statusLabel = {
+  ready: "待改写",
+  rewritten: "已改写",
+  failed: "提取失败"
+} as const;
+
 const App = () => {
   const [urlInput, setUrlInput] = useState("");
   const [extractItems, setExtractItems] = useState<ExtractBatchItem[]>([]);
   const [selectedExtractIndex, setSelectedExtractIndex] = useState<number | null>(null);
+  const [checkedJobIds, setCheckedJobIds] = useState<Set<string>>(new Set());
+  const [rewrittenByJobId, setRewrittenByJobId] = useState<Record<string, string>>({});
   const [jobId, setJobId] = useState<string | null>(null);
   const [extractResult, setExtractResult] = useState<Job["extracted"] | null>(null);
   const [rewrittenText, setRewrittenText] = useState("");
   const [rewriteMode, setRewriteMode] = useState<RewriteMode>("conservative");
   const [promptExtra, setPromptExtra] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState("");
   const [history, setHistory] = useState<JobWithExports[]>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [provider, setProvider] = useState<ProviderConfig>(DEFAULT_PROVIDER);
   const [error, setError] = useState("");
   const [localStateReady, setLocalStateReady] = useState(false);
-
-  const canRewrite = Boolean(jobId && extractResult);
-  const canExport = Boolean(jobId && rewrittenText.trim());
 
   const parsedUrls = useMemo(() => parseUrlsFromInput(urlInput), [urlInput]);
   const overBatchLimit = parsedUrls.length > MAX_BATCH_URLS;
@@ -66,6 +74,17 @@ const App = () => {
 
   const selectedExtractItem =
     selectedExtractIndex === null ? null : (extractItems[selectedExtractIndex] ?? null);
+
+  const successfulItems = extractItems.filter((item) => item.status === "success");
+  const selectedJobIds = successfulItems
+    .map((item) => item.jobId)
+    .filter((id) => checkedJobIds.has(id));
+
+  const canRewrite = Boolean(jobId && extractResult);
+  const canExport = Boolean(jobId && rewrittenText.trim());
+  const canBatchRewrite = selectedJobIds.length > 0;
+  const canBatchExport = selectedJobIds.length > 0;
+  const isBusy = Boolean(loadingLabel);
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -129,6 +148,13 @@ const App = () => {
     };
   }, [provider, rewriteMode, promptExtra, rewrittenText, localStateReady]);
 
+  const selectSuccessItem = (item: ExtractBatchItem & { status: "success" }, index: number) => {
+    setSelectedExtractIndex(index);
+    setJobId(item.jobId);
+    setExtractResult(item.extracted);
+    setRewrittenText(rewrittenByJobId[item.jobId] ?? "");
+  };
+
   const handleExtract = async () => {
     if (!canExtract) {
       if (overBatchLimit) {
@@ -138,13 +164,19 @@ const App = () => {
     }
 
     setError("");
-    setLoading(true);
+    setLoadingLabel("提取中");
     try {
       const response = await request<ExtractBatchResponse>("/api/v1/extract/batch", {
         method: "POST",
         body: JSON.stringify({ urls: parsedUrls })
       });
       setExtractItems(response.items);
+      setRewrittenByJobId({});
+
+      const successIds = response.items
+        .filter((item): item is ExtractBatchItem & { status: "success" } => item.status === "success")
+        .map((item) => item.jobId);
+      setCheckedJobIds(new Set(successIds));
 
       const firstSuccessIndex = response.items.findIndex((item) => item.status === "success");
       if (firstSuccessIndex >= 0) {
@@ -166,16 +198,7 @@ const App = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : "提取失败");
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const selectExtractItem = (item: ExtractBatchItem, index: number) => {
-    setSelectedExtractIndex(index);
-    if (item.status === "success") {
-      setJobId(item.jobId);
-      setExtractResult(item.extracted);
-      setRewrittenText("");
+      setLoadingLabel("");
     }
   };
 
@@ -184,7 +207,7 @@ const App = () => {
       return;
     }
     setError("");
-    setLoading(true);
+    setLoadingLabel("改写中");
     try {
       const response = await request<RewriteResponse>("/api/v1/rewrite", {
         method: "POST",
@@ -196,11 +219,47 @@ const App = () => {
         })
       });
       setRewrittenText(response.rewrittenText);
+      setRewrittenByJobId((current) => ({ ...current, [jobId]: response.rewrittenText }));
       await refreshJobs();
     } catch (err) {
       setError(err instanceof Error ? err.message : "改写失败");
     } finally {
-      setLoading(false);
+      setLoadingLabel("");
+    }
+  };
+
+  const handleBatchRewrite = async () => {
+    if (!canBatchRewrite) {
+      return;
+    }
+    setError("");
+    setLoadingLabel("批量改写中");
+    try {
+      const response = await request<RewriteBatchResponse>("/api/v1/rewrite/batch", {
+        method: "POST",
+        body: JSON.stringify({
+          jobIds: selectedJobIds,
+          mode: rewriteMode,
+          promptExtra: promptExtra.trim() || undefined,
+          provider
+        })
+      });
+
+      const nextTexts: Record<string, string> = {};
+      for (const item of response.items) {
+        if (item.status === "success") {
+          nextTexts[item.jobId] = item.rewrittenText;
+        }
+      }
+      setRewrittenByJobId((current) => ({ ...current, ...nextTexts }));
+      if (jobId && nextTexts[jobId]) {
+        setRewrittenText(nextTexts[jobId]);
+      }
+      await refreshJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量改写失败");
+    } finally {
+      setLoadingLabel("");
     }
   };
 
@@ -209,7 +268,7 @@ const App = () => {
       return;
     }
     setError("");
-    setLoading(true);
+    setLoadingLabel("导出中");
     try {
       const response = await request<ExportResponse>("/api/v1/export", {
         method: "POST",
@@ -220,7 +279,30 @@ const App = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : "导出失败");
     } finally {
-      setLoading(false);
+      setLoadingLabel("");
+    }
+  };
+
+  const handleBatchExport = async (format: ExportFormat) => {
+    if (!canBatchExport) {
+      return;
+    }
+    setError("");
+    setLoadingLabel("批量导出中");
+    try {
+      const response = await request<ExportBatchResponse>("/api/v1/export/batch", {
+        method: "POST",
+        body: JSON.stringify({ jobIds: selectedJobIds, format })
+      });
+      const firstSuccess = response.items.find((item) => item.status === "success");
+      if (firstSuccess?.status === "success") {
+        window.open(`${API_BASE}${firstSuccess.downloadUrl}`, "_blank");
+      }
+      await refreshJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量导出失败");
+    } finally {
+      setLoadingLabel("");
     }
   };
 
@@ -230,138 +312,250 @@ const App = () => {
     setRewrittenText(job.rewrittenText ?? "");
     setRewriteMode(job.rewriteMode ?? "conservative");
     setExtractItems([]);
+    setCheckedJobIds(new Set());
     setSelectedExtractIndex(null);
     setIsHistoryOpen(false);
   };
 
+  const toggleChecked = (id: string) => {
+    setCheckedJobIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setCheckedJobIds(new Set(successfulItems.map((item) => item.jobId)));
+  };
+
+  const clearAll = () => {
+    setCheckedJobIds(new Set());
+  };
+
+  const currentTitle = extractResult?.title || "任务详情";
+  const currentUrl = extractResult?.meta.sourceUrl || "";
+  const currentStatus = rewrittenText.trim() ? "rewritten" : "ready";
+
   return (
-    <div className="page">
-      <header className="hero">
-        <div className="hero-content">
-          <h1>AutoExtraction V1</h1>
-          <p>输入网页地址，一键完成提取、洗稿与文档导出。</p>
+    <div className="app-shell">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">AutoExtraction V1</p>
+          <h1>批量任务工作台</h1>
         </div>
-        <button className="history-btn" onClick={() => setIsHistoryOpen(true)}>
-          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          历史记录
-        </button>
+        <div className="topbar-actions">
+          {loadingLabel ? <span className="busy-indicator">{loadingLabel}</span> : null}
+          <button className="ghost-button" onClick={() => setIsHistoryOpen(true)}>
+            历史记录
+          </button>
+          <button className="ghost-button" onClick={() => setIsSettingsOpen(true)}>
+            设置
+          </button>
+        </div>
       </header>
 
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="notice error-notice">{error}</div> : null}
 
-      <div className="main-grid-layout">
-        <div className="left-col">
-          <section className="card">
-            <h2>1. URL 输入与提取</h2>
-            <label className="url-input-label">
-              批量 URL（支持换行、空格、英文逗号或中文逗号分隔）
-              <textarea
-                className="url-batch-input"
-                value={urlInput}
-                onChange={(event) => setUrlInput(event.target.value)}
-                placeholder="https://example.com/a\nhttps://example.com/b"
-                rows={6}
-              />
-            </label>
-            <div className="row">
-              <p className={`batch-count ${overBatchLimit ? "batch-count-error" : ""}`}>
-                已识别 {parsedUrls.length} 条 URL（上限 {MAX_BATCH_URLS}）
-              </p>
-              <button disabled={loading || !canExtract} onClick={handleExtract}>
-                {loading ? "处理中..." : "开始提取"}
+      <section className="command-panel">
+        <label className="url-box">
+          <span>粘贴网页链接</span>
+          <textarea
+            value={urlInput}
+            onChange={(event) => setUrlInput(event.target.value)}
+            placeholder="每行一个 URL，也支持空格或逗号分隔"
+            rows={3}
+          />
+        </label>
+        <div className="command-actions">
+          <div className={`input-meta ${overBatchLimit ? "danger-text" : ""}`}>
+            <strong>{parsedUrls.length}</strong> / {MAX_BATCH_URLS} 个链接
+          </div>
+          <button className="primary-button" disabled={isBusy || !canExtract} onClick={handleExtract}>
+            开始提取
+          </button>
+          <button disabled={isBusy || !canBatchRewrite} onClick={handleBatchRewrite}>
+            批量改写
+          </button>
+          <div className="export-buttons" aria-label="批量导出">
+            <button disabled={isBusy || !canBatchExport} onClick={() => handleBatchExport("docx")}>
+              Word
+            </button>
+            <button disabled={isBusy || !canBatchExport} onClick={() => handleBatchExport("pptx")}>
+              PPT
+            </button>
+            <button disabled={isBusy || !canBatchExport} onClick={() => handleBatchExport("pdf")}>
+              PDF
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <main className="workspace">
+        <aside className="queue-panel">
+          <div className="panel-header">
+            <div>
+              <h2>任务队列</h2>
+              <p>{selectedJobIds.length} 个已勾选</p>
+            </div>
+            <div className="mini-actions">
+              <button className="text-button" onClick={selectAll} disabled={successfulItems.length === 0}>
+                全选
+              </button>
+              <button className="text-button" onClick={clearAll} disabled={checkedJobIds.size === 0}>
+                清空
               </button>
             </div>
-          </section>
+          </div>
 
-          <section className="card flex-1-card">
-            <h2>2. 提取结果预览</h2>
-            {extractItems.length > 0 ? (
-              <div className="extract-panel">
-                <div className="extract-list" role="listbox" aria-label="批量提取结果列表">
-                  {extractItems.map((item, index) => {
-                    const isActive = selectedExtractIndex === index;
-                    return (
-                      <button
-                        key={`${item.inputUrl}-${index}`}
-                        className={`extract-item ${isActive ? "active" : ""} ${item.status === "failed" ? "failed" : ""}`}
-                        onClick={() => selectExtractItem(item, index)}
-                      >
-                        <div className="extract-item-title">
-                          {item.status === "success"
-                            ? item.extracted.title || item.url
-                            : item.inputUrl}
-                        </div>
-                        <div className="extract-item-meta">
-                          {item.status === "success" ? (
-                            <>
-                              <span className="status-success">成功</span>
-                              <span className="truncate">{item.url}</span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="status-failed">失败</span>
-                              <span className="truncate">{item.error}</span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="extract-detail">
-                  {selectedExtractItem ? (
-                    selectedExtractItem.status === "success" ? (
-                      <div className="result-container">
-                        <h3>{selectedExtractItem.extracted.title}</h3>
-                        <p className="meta">{selectedExtractItem.extracted.meta.sourceUrl}</p>
-                        <textarea className="flex-1-textarea" value={selectedExtractItem.extracted.contentMarkdown} readOnly />
-                      </div>
-                    ) : (
-                      <div className="failed-detail">
-                        <p className="hint">该 URL 提取失败</p>
-                        <p className="meta">{selectedExtractItem.inputUrl}</p>
-                        <p className="failed-text">{selectedExtractItem.error}</p>
-                      </div>
-                    )
-                  ) : (
-                    <p className="hint">请选择一条结果查看详情</p>
-                  )}
-                </div>
-              </div>
-            ) : extractResult ? (
-              <div className="result-container">
-                <h3>{extractResult.title}</h3>
-                <p className="meta">{extractResult.meta.sourceUrl}</p>
-                <textarea className="flex-1-textarea" value={extractResult.contentMarkdown} readOnly />
-              </div>
-            ) : (
-              <p className="hint">暂无提取结果</p>
-            )}
-          </section>
-        </div>
+          {extractItems.length === 0 ? (
+            <p className="empty-state">暂无任务，请先粘贴链接并开始提取</p>
+          ) : (
+            <div className="queue-list">
+              {extractItems.map((item, index) => {
+                const isActive = selectedExtractIndex === index;
+                const isSuccess = item.status === "success";
+                const title = isSuccess ? item.extracted.title || item.url : item.inputUrl;
+                const url = isSuccess ? item.url : item.error;
+                const itemStatus = isSuccess
+                  ? rewrittenByJobId[item.jobId] || (jobId === item.jobId && rewrittenText.trim())
+                    ? "rewritten"
+                    : "ready"
+                  : "failed";
 
-        <div className="right-col">
-          <section className="card flex-1-card">
-            <h2>3. 改写参数与结果</h2>
-            <div className="grid-2">
-              <label>
-                API Base URL
-                <input
-                  value={provider.baseUrl}
-                  onChange={(event) => setProvider({ ...provider, baseUrl: event.target.value })}
-                />
-              </label>
-              <label>
-                模型
-                <input
-                  value={provider.model}
-                  onChange={(event) => setProvider({ ...provider, model: event.target.value })}
-                />
-              </label>
+                return (
+                  <div
+                    key={`${item.inputUrl}-${index}`}
+                    role="button"
+                    tabIndex={0}
+                    className={`queue-item ${isActive ? "active" : ""}`}
+                    onClick={() => {
+                      if (item.status === "success") {
+                        selectSuccessItem(item, index);
+                      } else {
+                        setSelectedExtractIndex(index);
+                        setJobId(null);
+                        setExtractResult(null);
+                        setRewrittenText("");
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        if (item.status === "success") {
+                          selectSuccessItem(item, index);
+                        }
+                      }
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label="选择任务"
+                      checked={isSuccess && checkedJobIds.has(item.jobId)}
+                      disabled={!isSuccess}
+                      onChange={() => {
+                        if (isSuccess) {
+                          toggleChecked(item.jobId);
+                        }
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                    <div className="queue-content">
+                      <div className="queue-title">{title}</div>
+                      <div className="queue-url">{url}</div>
+                      {!isSuccess ? <div className="item-error">{item.error}</div> : null}
+                    </div>
+                    <span className={`status-badge status-${itemStatus}`}>
+                      {statusLabel[itemStatus]}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
+          )}
+        </aside>
+
+        <section className="detail-panel">
+          {extractResult ? (
+            <>
+              <div className="panel-header detail-header">
+                <div>
+                  <h2>{currentTitle}</h2>
+                  <p>{currentUrl}</p>
+                </div>
+                <span className={`status-badge status-${currentStatus}`}>{statusLabel[currentStatus]}</span>
+              </div>
+              <div className="preview-grid">
+                <label className="content-column">
+                  <span>提取内容</span>
+                  <textarea value={extractResult.contentMarkdown} readOnly placeholder="提取完成后显示正文" />
+                </label>
+                <label className="content-column">
+                  <span>改写结果</span>
+                  <textarea
+                    value={rewrittenText}
+                    onChange={(event) => setRewrittenText(event.target.value)}
+                    placeholder="改写完成后显示结果，也可以手动编辑"
+                  />
+                </label>
+              </div>
+              <div className="detail-actions">
+                <button className="primary-button" disabled={isBusy || !canRewrite} onClick={handleRewrite}>
+                  执行改写
+                </button>
+                <button disabled={isBusy || !canExport} onClick={() => handleExport("docx")}>
+                  导出 Word
+                </button>
+                <button disabled={isBusy || !canExport} onClick={() => handleExport("pptx")}>
+                  导出 PPT
+                </button>
+                <button disabled={isBusy || !canExport} onClick={() => handleExport("pdf")}>
+                  导出 PDF
+                </button>
+              </div>
+            </>
+          ) : selectedExtractItem?.status === "failed" ? (
+            <div className="empty-state large">
+              <strong>该 URL 提取失败</strong>
+              <p>{selectedExtractItem.inputUrl}</p>
+              <p className="danger-text">{selectedExtractItem.error}</p>
+            </div>
+          ) : (
+            <p className="empty-state large">请选择任务查看详情</p>
+          )}
+        </section>
+      </main>
+
+      {isSettingsOpen ? (
+        <div className="drawer-backdrop" onClick={() => setIsSettingsOpen(false)}>
+          <aside className="settings-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="drawer-header">
+              <div>
+                <h2>改写设置</h2>
+                <p>配置模型、模式与附加要求</p>
+              </div>
+              <button className="icon-button" onClick={() => setIsSettingsOpen(false)}>
+                ×
+              </button>
+            </div>
+            <label>
+              API Base URL
+              <input
+                value={provider.baseUrl}
+                onChange={(event) => setProvider({ ...provider, baseUrl: event.target.value })}
+              />
+            </label>
+            <label>
+              模型
+              <input
+                value={provider.model}
+                onChange={(event) => setProvider({ ...provider, model: event.target.value })}
+              />
+            </label>
             <label>
               API Key
               <input
@@ -371,75 +565,63 @@ const App = () => {
                 placeholder="本地明文保存由你自行管理"
               />
             </label>
-            <div className="row">
+            <label>
+              改写模式
               <select value={rewriteMode} onChange={(event) => setRewriteMode(event.target.value as RewriteMode)}>
                 <option value="conservative">保守改写</option>
                 <option value="aggressive">深度改写</option>
               </select>
-              <button disabled={loading || !canRewrite} onClick={handleRewrite}>
-                执行改写
-              </button>
-            </div>
-            <label className="mt-4">
-              附加要求（可选）
-              <textarea value={promptExtra} onChange={(event) => setPromptExtra(event.target.value)} rows={2} />
             </label>
-            <label className="flex-1-label mt-4">
-              改写结果
-              <textarea className="flex-1-textarea" value={rewrittenText} onChange={(event) => setRewrittenText(event.target.value)} />
+            <label>
+              附加要求
+              <textarea value={promptExtra} onChange={(event) => setPromptExtra(event.target.value)} rows={4} />
             </label>
-          </section>
-
-          <section className="card">
-            <h2>4. 导出下载</h2>
-            <div className="row">
-              <button disabled={loading || !canExport} onClick={() => handleExport("docx")}>
-                导出 Word
-              </button>
-              <button disabled={loading || !canExport} onClick={() => handleExport("pptx")}>
-                导出 PPT
-              </button>
-              <button disabled={loading || !canExport} onClick={() => handleExport("pdf")}>
-                导出 PDF
-              </button>
-            </div>
-          </section>
+          </aside>
         </div>
-      </div>
+      ) : null}
 
-      {isHistoryOpen && (
-        <div className="modal-overlay" onClick={() => setIsHistoryOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>历史任务</h2>
-              <button className="close-btn" onClick={() => setIsHistoryOpen(false)}>✕</button>
+      {isHistoryOpen ? (
+        <div className="drawer-backdrop" onClick={() => setIsHistoryOpen(false)}>
+          <aside className="history-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="drawer-header">
+              <div>
+                <h2>历史记录</h2>
+                <p>最近保存的任务</p>
+              </div>
+              <button className="icon-button" onClick={() => setIsHistoryOpen(false)}>
+                ×
+              </button>
             </div>
             {sortedHistory.length === 0 ? (
-              <p className="hint">暂无历史记录</p>
+              <p className="empty-state">暂无历史记录</p>
             ) : (
-              <ul className="history">
+              <div className="history-list">
                 {sortedHistory.map((item) => (
-                  <li key={item.id}>
-                    <button className="link-btn" title={item.extracted?.title || item.url} onClick={() => loadFromHistory(item)}>
-                      {item.extracted?.title || item.url}
-                    </button>
-                    <div className="history-meta">
-                      <span>{new Date(item.createdAt).toLocaleString()}</span>
-                      <div className="history-exports">
-                        {item.exports?.map((exported) => (
-                          <a key={exported.fileId} href={`${API_BASE}${exported.downloadUrl}`} target="_blank" rel="noreferrer">
+                  <button className="history-item" key={item.id} onClick={() => loadFromHistory(item)}>
+                    <span>{item.extracted?.title || item.url}</span>
+                    <small>{new Date(item.createdAt).toLocaleString()}</small>
+                    {item.exports?.length ? (
+                      <div className="download-links">
+                        {item.exports.map((exported) => (
+                          <a
+                            key={exported.fileId}
+                            href={`${API_BASE}${exported.downloadUrl}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                          >
                             {exported.format}
                           </a>
                         ))}
                       </div>
-                    </div>
-                  </li>
+                    ) : null}
+                  </button>
                 ))}
-              </ul>
+              </div>
             )}
-          </div>
+          </aside>
         </div>
-      )}
+      ) : null}
     </div>
   );
 };

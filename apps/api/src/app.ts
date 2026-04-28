@@ -4,9 +4,11 @@ import express from "express";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type {
+  ExportBatchItem,
   ExtractBatchItem,
   ExportFormat,
   ProviderConfig,
+  RewriteBatchItem,
   RewriteLocalState,
   RewriteMode
 } from "@autoextraction/shared";
@@ -39,16 +41,28 @@ const rewriteSchema = z.object({
   provider: z
     .object({
       baseUrl: z.string().url(),
-      apiKey: z.string().min(1),
+      apiKey: z.string(),
       model: z.string().min(1)
     })
     .optional()
 });
 
+const rewriteBatchSchema = rewriteSchema
+  .omit({ jobId: true })
+  .extend({
+    jobIds: z.array(z.string().min(1)).min(1).max(20)
+  });
+
 const exportSchema = z.object({
   jobId: z.string().min(1),
   format: z.enum(["docx", "pptx", "pdf"])
 });
+
+const exportBatchSchema = exportSchema
+  .omit({ jobId: true })
+  .extend({
+    jobIds: z.array(z.string().min(1)).min(1).max(20)
+  });
 
 const rewriteLocalStateSchema = z.object({
   provider: z.object({
@@ -164,6 +178,62 @@ export const createApp = (deps: AppDependencies) => {
     }
   });
 
+  app.post("/api/v1/rewrite/batch", async (req, res, next) => {
+    try {
+      const input = rewriteBatchSchema.parse(req.body);
+      const items: RewriteBatchItem[] = [];
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (const jobId of input.jobIds) {
+        try {
+          const job = deps.repository.getJob(jobId);
+          if (!job) {
+            throw new Error("任务不存在");
+          }
+
+          const rewritten = await deps.rewriter.rewrite({
+            sourceTitle: job.extracted.title,
+            sourceText: job.extracted.contentMarkdown || job.extracted.contentHtml,
+            mode: input.mode as RewriteMode,
+            ...(input.promptExtra ? { promptExtra: input.promptExtra } : {}),
+            ...(input.provider ? { provider: input.provider as ProviderConfig } : {})
+          });
+
+          deps.repository.updateRewrite({
+            id: jobId,
+            rewrittenText: rewritten.rewrittenText,
+            rewriteMode: input.mode as RewriteMode
+          });
+
+          items.push({
+            jobId,
+            status: "success",
+            rewrittenText: rewritten.rewrittenText,
+            ...(rewritten.usage ? { usage: rewritten.usage } : {})
+          });
+          successCount += 1;
+        } catch (error) {
+          items.push({
+            jobId,
+            status: "failed",
+            error: error instanceof Error ? error.message : "改写失败"
+          });
+          failedCount += 1;
+        }
+      }
+
+      res.json({
+        total: input.jobIds.length,
+        successCount,
+        failedCount,
+        items
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/v1/export", async (req, res, next) => {
     try {
       const input = exportSchema.parse(req.body);
@@ -196,6 +266,68 @@ export const createApp = (deps: AppDependencies) => {
         fileId: exported.fileId,
         fileName: exported.fileName,
         downloadUrl: `/api/v1/download/${exported.fileId}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/v1/export/batch", async (req, res, next) => {
+    try {
+      const input = exportBatchSchema.parse(req.body);
+      const items: ExportBatchItem[] = [];
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (const jobId of input.jobIds) {
+        try {
+          const job = deps.repository.getJob(jobId);
+          if (!job) {
+            throw new Error("任务不存在");
+          }
+          if (!job.rewrittenText) {
+            throw new Error("请先执行改写后再导出");
+          }
+
+          const exported = await deps.exporter.export({
+            jobId,
+            format: input.format as ExportFormat,
+            title: job.extracted.title,
+            text: job.rewrittenText
+          });
+
+          deps.repository.addExport({
+            fileId: exported.fileId,
+            jobId,
+            format: input.format as ExportFormat,
+            fileName: exported.fileName,
+            filePath: exported.filePath
+          });
+
+          items.push({
+            jobId,
+            status: "success",
+            fileId: exported.fileId,
+            format: input.format as ExportFormat,
+            fileName: exported.fileName,
+            downloadUrl: `/api/v1/download/${exported.fileId}`
+          });
+          successCount += 1;
+        } catch (error) {
+          items.push({
+            jobId,
+            status: "failed",
+            error: error instanceof Error ? error.message : "导出失败"
+          });
+          failedCount += 1;
+        }
+      }
+
+      res.json({
+        total: input.jobIds.length,
+        successCount,
+        failedCount,
+        items
       });
     } catch (error) {
       next(error);

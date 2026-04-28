@@ -179,6 +179,232 @@ describe("API routes", () => {
     expect(response.body.items[1]?.status).toBe("failed");
   });
 
+  it("批量改写应支持部分任务失败且不阻断其他任务", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "autoextraction-app-"));
+    tempDirs.push(dir);
+    const repository = new JobRepository(join(dir, "api.db"), dir);
+    repositories.push(repository);
+    const app = createApp({
+      repository,
+      extractor: {
+        extract: async (url: string) => ({
+          url,
+          extracted: {
+            title: `标题-${url}`,
+            contentMarkdown: "正文",
+            contentHtml: "<p>正文</p>",
+            meta: {
+              sourceUrl: url
+            }
+          }
+        })
+      },
+      rewriter: {
+        rewrite: async (params: {
+          sourceTitle: string;
+          sourceText: string;
+          mode: RewriteMode;
+          promptExtra?: string;
+          provider?: ProviderConfig;
+        }) => {
+          if (params.sourceTitle.includes("fail")) {
+            throw new Error("AI 改写失败");
+          }
+          return {
+            rewrittenText: `${params.sourceTitle}-${params.mode}`
+          };
+        }
+      },
+      exporter: {
+        export: async (params: { jobId: string; format: ExportFormat; text: string; title: string }) => {
+          const filePath = join(dir, `${params.jobId}.${params.format}`);
+          writeFileSync(filePath, params.text, "utf8");
+          return {
+            fileId: `file-${params.jobId}`,
+            fileName: `${params.jobId}.${params.format}`,
+            filePath
+          };
+        }
+      },
+      rewriteLocalStateStore: createMemoryRewriteLocalStateStore()
+    });
+
+    const first = await request(app).post("/api/v1/extract").send({ url: "https://example.com/ok" });
+    const second = await request(app).post("/api/v1/extract").send({ url: "https://example.com/fail" });
+
+    const response = await request(app).post("/api/v1/rewrite/batch").send({
+      jobIds: [first.body.jobId, "missing-job", second.body.jobId],
+      mode: "aggressive",
+      promptExtra: "更直接"
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.total).toBe(3);
+    expect(response.body.successCount).toBe(1);
+    expect(response.body.failedCount).toBe(2);
+    expect(response.body.items[0]).toMatchObject({
+      status: "success",
+      jobId: first.body.jobId,
+      rewrittenText: "标题-https://example.com/ok-aggressive"
+    });
+    expect(response.body.items[1]).toMatchObject({
+      status: "failed",
+      jobId: "missing-job",
+      error: "任务不存在"
+    });
+    expect(response.body.items[2]).toMatchObject({
+      status: "failed",
+      jobId: second.body.jobId,
+      error: "AI 改写失败"
+    });
+  });
+
+  it("批量改写缺少 API Key 时应返回清晰的单项失败原因", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "autoextraction-app-"));
+    tempDirs.push(dir);
+    const repository = new JobRepository(join(dir, "api.db"), dir);
+    repositories.push(repository);
+    const app = createApp({
+      repository,
+      extractor: {
+        extract: async (url: string) => ({
+          url,
+          extracted: {
+            title: "标题",
+            contentMarkdown: "正文",
+            contentHtml: "<p>正文</p>",
+            meta: {
+              sourceUrl: url
+            }
+          }
+        })
+      },
+      rewriter: {
+        rewrite: async (params: {
+          sourceTitle: string;
+          sourceText: string;
+          mode: RewriteMode;
+          promptExtra?: string;
+          provider?: ProviderConfig;
+        }) => {
+          if (!params.provider?.apiKey) {
+            throw new Error("缺少 AI API Key，请在页面填写或通过环境变量配置 OPENAI_API_KEY");
+          }
+          return {
+            rewrittenText: "改写结果"
+          };
+        }
+      },
+      exporter: {
+        export: async (params: { jobId: string; format: ExportFormat; text: string; title: string }) => {
+          const filePath = join(dir, `${params.jobId}.${params.format}`);
+          writeFileSync(filePath, params.text, "utf8");
+          return {
+            fileId: `file-${params.jobId}`,
+            fileName: `${params.jobId}.${params.format}`,
+            filePath
+          };
+        }
+      },
+      rewriteLocalStateStore: createMemoryRewriteLocalStateStore()
+    });
+
+    const extracted = await request(app).post("/api/v1/extract").send({ url: "https://example.com/needs-key" });
+    const response = await request(app).post("/api/v1/rewrite/batch").send({
+      jobIds: [extracted.body.jobId],
+      mode: "conservative",
+      provider: {
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "",
+        model: "gpt-4o-mini"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.failedCount).toBe(1);
+    expect(response.body.items[0]).toMatchObject({
+      status: "failed",
+      jobId: extracted.body.jobId,
+      error: "缺少 AI API Key，请在页面填写或通过环境变量配置 OPENAI_API_KEY"
+    });
+  });
+
+  it("批量导出应返回每个任务的文件或失败原因", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "autoextraction-app-"));
+    tempDirs.push(dir);
+    const repository = new JobRepository(join(dir, "api.db"), dir);
+    repositories.push(repository);
+    const app = createApp({
+      repository,
+      extractor: {
+        extract: async (url: string) => ({
+          url,
+          extracted: {
+            title: `标题-${url}`,
+            contentMarkdown: "正文",
+            contentHtml: "<p>正文</p>",
+            meta: {
+              sourceUrl: url
+            }
+          }
+        })
+      },
+      rewriter: {
+        rewrite: async (params: {
+          sourceTitle: string;
+          sourceText: string;
+          mode: RewriteMode;
+          promptExtra?: string;
+          provider?: ProviderConfig;
+        }) => ({
+          rewrittenText: `${params.sourceTitle}-${params.mode}`
+        })
+      },
+      exporter: {
+        export: async (params: { jobId: string; format: ExportFormat; text: string; title: string }) => {
+          const filePath = join(dir, `${params.jobId}.${params.format}`);
+          writeFileSync(filePath, params.text, "utf8");
+          return {
+            fileId: `file-${params.jobId}`,
+            fileName: `${params.jobId}.${params.format}`,
+            filePath
+          };
+        }
+      },
+      rewriteLocalStateStore: createMemoryRewriteLocalStateStore()
+    });
+
+    const first = await request(app).post("/api/v1/extract").send({ url: "https://example.com/ready" });
+    const second = await request(app).post("/api/v1/extract").send({ url: "https://example.com/raw" });
+    await request(app).post("/api/v1/rewrite").send({ jobId: first.body.jobId, mode: "conservative" });
+
+    const response = await request(app).post("/api/v1/export/batch").send({
+      jobIds: [first.body.jobId, second.body.jobId, "missing-job"],
+      format: "pdf"
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.total).toBe(3);
+    expect(response.body.successCount).toBe(1);
+    expect(response.body.failedCount).toBe(2);
+    expect(response.body.items[0]).toMatchObject({
+      status: "success",
+      jobId: first.body.jobId,
+      format: "pdf",
+      downloadUrl: `/api/v1/download/file-${first.body.jobId}`
+    });
+    expect(response.body.items[1]).toMatchObject({
+      status: "failed",
+      jobId: second.body.jobId,
+      error: "请先执行改写后再导出"
+    });
+    expect(response.body.items[2]).toMatchObject({
+      status: "failed",
+      jobId: "missing-job",
+      error: "任务不存在"
+    });
+  });
+
   it("本地改写状态应支持读取与更新", async () => {
     const dir = mkdtempSync(join(tmpdir(), "autoextraction-app-"));
     tempDirs.push(dir);

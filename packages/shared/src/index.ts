@@ -91,6 +91,37 @@ export interface RewriteResponse {
   };
 }
 
+export interface RewriteBatchRequest {
+  jobIds: string[];
+  mode: RewriteMode;
+  promptExtra?: string;
+  provider?: ProviderConfig;
+}
+
+export type RewriteBatchItem =
+  | {
+      jobId: string;
+      status: "success";
+      rewrittenText: string;
+      usage?: {
+        promptTokens?: number;
+        completionTokens?: number;
+        totalTokens?: number;
+      };
+    }
+  | {
+      jobId: string;
+      status: "failed";
+      error: string;
+    };
+
+export interface RewriteBatchResponse {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  items: RewriteBatchItem[];
+}
+
 export interface RewriteLocalState {
   provider: ProviderConfig;
   rewriteMode: RewriteMode;
@@ -107,4 +138,31 @@ export interface ExportResponse {
   fileId: string;
   fileName: string;
   downloadUrl: string;
+}
+
+export interface ExportBatchRequest {
+  jobIds: string[];
+  format: ExportFormat;
+}
+
+export type ExportBatchItem =
+  | {
+      jobId: string;
+      status: "success";
+      fileId: string;
+      format: ExportFormat;
+      fileName: string;
+      downloadUrl: string;
+    }
+  | {
+      jobId: string;
+      status: "failed";
+      error: string;
+    };
+
+export interface ExportBatchResponse {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  items: ExportBatchItem[];
 }

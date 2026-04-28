@@ -27,11 +27,13 @@ export interface AppDependencies {
 }
 
 const extractSchema = z.object({
-  url: z.string().url()
+  url: z.string().url(),
+  ignoreRobots: z.boolean().optional()
 });
 
 const extractBatchSchema = z.object({
-  urls: z.array(z.string().trim().min(1)).min(1).max(20)
+  urls: z.array(z.string().trim().min(1)).min(1).max(20),
+  ignoreRobots: z.boolean().optional()
 });
 
 const rewriteSchema = z.object({
@@ -87,7 +89,9 @@ export const createApp = (deps: AppDependencies) => {
   app.post("/api/v1/extract", async (req, res, next) => {
     try {
       const input = extractSchema.parse(req.body);
-      const { url, extracted } = await deps.extractor.extract(input.url);
+      const { url, extracted } = await deps.extractor.extract(input.url, {
+        ignoreRobots: input.ignoreRobots
+      });
       const job = deps.repository.createJob({
         id: nanoid(12),
         url,
@@ -111,7 +115,9 @@ export const createApp = (deps: AppDependencies) => {
 
       for (const inputUrl of input.urls) {
         try {
-          const { url, extracted } = await deps.extractor.extract(inputUrl);
+          const { url, extracted } = await deps.extractor.extract(inputUrl, {
+            ignoreRobots: input.ignoreRobots
+          });
           const job = deps.repository.createJob({
             id: nanoid(12),
             url,

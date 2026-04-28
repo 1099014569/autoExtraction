@@ -43,6 +43,7 @@ export interface ExportedFile {
 
 export interface ExtractRequest {
   url: string;
+  ignoreRobots?: boolean;
 }
 
 export interface ExtractResponse {
@@ -52,6 +53,7 @@ export interface ExtractResponse {
 
 export interface ExtractBatchRequest {
   urls: string[];
+  ignoreRobots?: boolean;
 }
 
 export type ExtractBatchItem =

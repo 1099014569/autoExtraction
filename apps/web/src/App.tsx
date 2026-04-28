@@ -62,6 +62,7 @@ const App = () => {
   const [provider, setProvider] = useState<ProviderConfig>(DEFAULT_PROVIDER);
   const [error, setError] = useState("");
   const [localStateReady, setLocalStateReady] = useState(false);
+  const [ignoreRobots, setIgnoreRobots] = useState(false);
 
   const parsedUrls = useMemo(() => parseUrlsFromInput(urlInput), [urlInput]);
   const overBatchLimit = parsedUrls.length > MAX_BATCH_URLS;
@@ -168,7 +169,7 @@ const App = () => {
     try {
       const response = await request<ExtractBatchResponse>("/api/v1/extract/batch", {
         method: "POST",
-        body: JSON.stringify({ urls: parsedUrls })
+        body: JSON.stringify({ urls: parsedUrls, ignoreRobots })
       });
       setExtractItems(response.items);
       setRewrittenByJobId({});
@@ -375,6 +376,14 @@ const App = () => {
           <div className={`input-meta ${overBatchLimit ? "danger-text" : ""}`}>
             <strong>{parsedUrls.length}</strong> / {MAX_BATCH_URLS} 个链接
           </div>
+          <label className="inline-checkbox">
+            <input
+              type="checkbox"
+              checked={ignoreRobots}
+              onChange={(e) => setIgnoreRobots(e.target.checked)}
+            />
+            忽略 robots.txt 限制
+          </label>
           <button className="primary-button" disabled={isBusy || !canExtract} onClick={handleExtract}>
             开始提取
           </button>

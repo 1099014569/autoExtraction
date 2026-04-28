@@ -5,7 +5,10 @@ import { ensureRobotsAllowed } from "./robots.js";
 import { HostRateLimiter } from "./rateLimiter.js";
 
 export interface Extractor {
-  extract: (url: string) => Promise<{ url: string; extracted: ExtractedContent }>;
+  extract: (
+    url: string,
+    options?: { ignoreRobots?: boolean }
+  ) => Promise<{ url: string; extracted: ExtractedContent }>;
 }
 
 export class PlaywrightExtractor implements Extractor {
@@ -14,11 +17,16 @@ export class PlaywrightExtractor implements Extractor {
     private readonly rateLimiter: HostRateLimiter
   ) {}
 
-  async extract(url: string): Promise<{ url: string; extracted: ExtractedContent }> {
-    await ensureRobotsAllowed({
-      targetUrl: url,
-      userAgent: this.userAgent
-    });
+  async extract(
+    url: string,
+    options?: { ignoreRobots?: boolean }
+  ): Promise<{ url: string; extracted: ExtractedContent }> {
+    if (!options?.ignoreRobots) {
+      await ensureRobotsAllowed({
+        targetUrl: url,
+        userAgent: this.userAgent
+      });
+    }
     await this.rateLimiter.waitForTurn(url);
 
     const browser = await chromium.launch({ headless: true });

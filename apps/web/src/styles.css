@@ -253,6 +253,16 @@ h2 {
   font-weight: 700;
 }
 
+.inline-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 430px minmax(0, 1fr);
